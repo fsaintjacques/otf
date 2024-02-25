@@ -15,14 +15,13 @@ import (
 	"github.com/leg100/otf/internal/authenticator"
 	"github.com/leg100/otf/internal/configversion"
 	"github.com/leg100/otf/internal/connections"
-	"github.com/leg100/otf/internal/disco"
+	"github.com/leg100/otf/internal/controllers/tfapi"
 	"github.com/leg100/otf/internal/ghapphandler"
 	"github.com/leg100/otf/internal/github"
 	"github.com/leg100/otf/internal/gitlab"
 	"github.com/leg100/otf/internal/http"
 	"github.com/leg100/otf/internal/http/html"
 	"github.com/leg100/otf/internal/inmem"
-	"github.com/leg100/otf/internal/loginserver"
 	"github.com/leg100/otf/internal/logs"
 	"github.com/leg100/otf/internal/module"
 	"github.com/leg100/otf/internal/notifications"
@@ -361,6 +360,7 @@ func New(ctx context.Context, logger logr.Logger, cfg Config) (*Daemon, error) {
 	})
 
 	handlers := []internal.Handlers{
+		tfapi.NewTerraformAPIService(cfg.Secret, userService, renderer),
 		teamService,
 		userService,
 		workspaceService,
@@ -373,16 +373,10 @@ func New(ctx context.Context, logger logr.Logger, cfg Config) (*Daemon, error) {
 		logsService,
 		repoService,
 		authenticatorService,
-		loginserver.NewServer(loginserver.Options{
-			Secret:      cfg.Secret,
-			Renderer:    renderer,
-			UserService: userService,
-		}),
 		configService,
 		notificationService,
 		githubAppService,
 		agentService,
-		disco.Service{},
 		&ghapphandler.Handler{
 			Logger:       logger,
 			Publisher:    vcsEventBroker,
