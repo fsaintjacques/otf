@@ -16,6 +16,7 @@ import (
 	"github.com/leg100/otf/internal/configversion"
 	"github.com/leg100/otf/internal/connections"
 	"github.com/leg100/otf/internal/controllers/tfapi"
+	"github.com/leg100/otf/internal/controllers/tfeapi"
 	"github.com/leg100/otf/internal/ghapphandler"
 	"github.com/leg100/otf/internal/github"
 	"github.com/leg100/otf/internal/gitlab"
@@ -33,7 +34,7 @@ import (
 	"github.com/leg100/otf/internal/sql"
 	"github.com/leg100/otf/internal/state"
 	"github.com/leg100/otf/internal/team"
-	"github.com/leg100/otf/internal/tfeapi"
+	tfeutils "github.com/leg100/otf/internal/tfeapi"
 	"github.com/leg100/otf/internal/tokens"
 	"github.com/leg100/otf/internal/user"
 	"github.com/leg100/otf/internal/variable"
@@ -116,7 +117,7 @@ func New(ctx context.Context, logger logr.Logger, cfg Config) (*Daemon, error) {
 	listener := sql.NewListener(logger, db)
 
 	// responder responds to TFE API requests
-	responder := tfeapi.NewResponder()
+	responder := tfeutils.NewResponder()
 
 	// Setup url signer
 	signer := internal.NewSigner(cfg.Secret)
@@ -359,8 +360,17 @@ func New(ctx context.Context, logger logr.Logger, cfg Config) (*Daemon, error) {
 		WorkspaceAuthorizer: workspaceService,
 	})
 
+	tfapi := tfapi.NewTerraformAPIService(cfg.Secret, userService, renderer)
+	tfeapi := tfeapi.NewTerraformEnterpriseAPIService(tfeapi.Options{
+		ConfigurationVersionService: configService,
+		Responder:                   responder,
+		Signer:                      signer,
+		MaxUploadSize:               cfg.MaxConfigSize,
+	})
+
 	handlers := []internal.Handlers{
-		tfapi.NewTerraformAPIService(cfg.Secret, userService, renderer),
+		tfapi,
+		tfeapi,
 		teamService,
 		userService,
 		workspaceService,
@@ -384,7 +394,6 @@ func New(ctx context.Context, logger logr.Logger, cfg Config) (*Daemon, error) {
 			VCSProviders: vcsProviderService,
 		},
 		&api.Handlers{},
-		&tfeapi.Handlers{},
 	}
 
 	return &Daemon{
