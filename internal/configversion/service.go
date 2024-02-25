@@ -14,15 +14,27 @@ import (
 )
 
 type (
+	ConfigurationVersionService interface {
+		// By WorkspaceID
+		Create(context.Context, string, CreateOptions) (*ConfigurationVersion, error)
+		List(context.Context, string, ListOptions) (*resource.Page[*ConfigurationVersion], error)
+		GetLatest(context.Context, string) (*ConfigurationVersion, error)
+
+		// By ConfigurationVersionID
+		Get(context.Context, string) (*ConfigurationVersion, error)
+		Delete(context.Context, string) error
+		Upload(context.Context, string, []byte) error
+		Download(context.Context, string) ([]byte, error)
+	}
+
 	Service struct {
 		logr.Logger
 
 		workspace internal.Authorizer
 
-		db     *pgdb
-		cache  internal.Cache
-		tfeapi *tfe
-		api    *api
+		db    *pgdb
+		cache internal.Cache
+		api   *api
 	}
 
 	Options struct {
@@ -47,30 +59,15 @@ func NewService(opts Options) *Service {
 
 	svc.db = &pgdb{opts.DB}
 	svc.cache = opts.Cache
-	svc.tfeapi = &tfe{
-		Logger:        opts.Logger,
-		tfeClient:     &svc,
-		Signer:        opts.Signer,
-		Responder:     opts.Responder,
-		maxConfigSize: opts.MaxConfigSize,
-	}
 	svc.api = &api{
 		Service:   &svc,
 		Responder: opts.Responder,
 	}
 
-	// Fetch config version when API requests config version be included in the
-	// response
-	opts.Responder.Register(tfeapi.IncludeConfig, svc.tfeapi.include)
-	// Fetch ingress attributes when API requests ingress attributes be included
-	// in the response
-	opts.Responder.Register(tfeapi.IncludeIngress, svc.tfeapi.includeIngressAttributes)
-
 	return &svc
 }
 
 func (s *Service) AddHandlers(r *mux.Router) {
-	s.tfeapi.addHandlers(r)
 	s.api.addHandlers(r)
 }
 
@@ -152,6 +149,14 @@ func (s *Service) Delete(ctx context.Context, cvID string) error {
 	}
 	s.V(2).Info("deleted configuration version", "id", cvID, "subject", subject)
 	return nil
+}
+
+func (s *Service) Upload(ctx context.Context, cvID string, config []byte) error {
+	return s.UploadConfig(ctx, cvID, config)
+}
+
+func (s *Service) Download(ctx context.Context, cvID string) ([]byte, error) {
+	return s.DownloadConfig(ctx, cvID)
 }
 
 func (s *Service) canAccess(ctx context.Context, action rbac.Action, cvID string) (internal.Subject, error) {
