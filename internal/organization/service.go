@@ -18,6 +18,19 @@ import (
 )
 
 type (
+	OrganizationService interface {
+		// By Name
+		Get(context.Context, string) (*Organization, error)
+		List(context.Context, ListOptions) (*resource.Page[*Organization], error)
+		Create(context.Context, CreateOptions) (*Organization, error)
+		Update(context.Context, string, UpdateOptions) (*Organization, error)
+		Delete(context.Context, string) error
+		GetEntitlements(context.Context, string) (Entitlements, error)
+		CreateToken(context.Context, CreateOrganizationTokenOptions) (*OrganizationToken, []byte, error)
+		GetOrganizationToken(context.Context, string) (*OrganizationToken, error)
+		DeleteToken(context.Context, string) error
+	}
+
 	Service struct {
 		RestrictOrganizationCreation bool
 
@@ -27,7 +40,6 @@ type (
 		db           *pgdb
 		site         internal.Authorizer // authorize access to site
 		web          *web
-		tfeapi       *tfe
 		api          *api
 		tokenFactory *tokenFactory
 		broker       *pubsub.Broker[*Organization]
@@ -67,10 +79,6 @@ func NewService(opts Options) *Service {
 		RestrictCreation: opts.RestrictOrganizationCreation,
 		svc:              &svc,
 	}
-	svc.tfeapi = &tfe{
-		Service:   &svc,
-		Responder: opts.Responder,
-	}
 
 	svc.api = &api{
 		Service:   &svc,
@@ -87,9 +95,6 @@ func NewService(opts Options) *Service {
 			return svc.db.getByID(ctx, id)
 		},
 	)
-	// Fetch organization when API calls request organization be included in the
-	// response
-	opts.Responder.Register(tfeapi.IncludeOrganization, svc.tfeapi.include)
 	// Register with auth middleware the organization token and a means of
 	// retrieving organization corresponding to token.
 	opts.TokensService.RegisterKind(OrganizationTokenKind, func(ctx context.Context, tokenID string) (internal.Subject, error) {
@@ -100,7 +105,6 @@ func NewService(opts Options) *Service {
 
 func (s *Service) AddHandlers(r *mux.Router) {
 	s.web.addHandlers(r)
-	s.tfeapi.addHandlers(r)
 	s.api.addHandlers(r)
 }
 

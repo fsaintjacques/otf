@@ -363,6 +363,7 @@ func New(ctx context.Context, logger logr.Logger, cfg Config) (*Daemon, error) {
 	tfapi := tfapi.NewTerraformAPIService(cfg.Secret, userService, renderer)
 	tfeapi := tfeapi.NewTerraformEnterpriseAPIService(tfeapi.Options{
 		ConfigurationVersionService: configService,
+		OrganizationService:         orgService,
 		Responder:                   responder,
 		Signer:                      signer,
 		MaxUploadSize:               cfg.MaxConfigSize,
