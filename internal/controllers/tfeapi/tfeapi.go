@@ -22,6 +22,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/leg100/otf/internal"
 	"github.com/leg100/otf/internal/configversion"
+	"github.com/leg100/otf/internal/organization"
 	"github.com/leg100/otf/internal/resource"
 	"github.com/leg100/otf/internal/tfeapi"
 	"github.com/leg100/surl"
@@ -29,7 +30,8 @@ import (
 
 type (
 	TerraformEnterpriseAPIService struct {
-		cv ConfigurationVersionService
+		cv  ConfigurationVersionService
+		org OrganizationService
 
 		responder *tfeapi.Responder
 		signer    *surl.Signer
@@ -39,6 +41,7 @@ type (
 
 	Options struct {
 		ConfigurationVersionService
+		OrganizationService
 
 		*tfeapi.Responder
 		*surl.Signer
@@ -47,11 +50,14 @@ type (
 	}
 
 	ConfigurationVersionService = configversion.ConfigurationVersionService
+	OrganizationService         = organization.OrganizationService
 )
 
 func NewTerraformEnterpriseAPIService(opts Options) *TerraformEnterpriseAPIService {
 	return &TerraformEnterpriseAPIService{
-		cv:            opts.ConfigurationVersionService,
+		cv:  opts.ConfigurationVersionService,
+		org: opts.OrganizationService,
+
 		responder:     opts.Responder,
 		signer:        opts.Signer,
 		maxUploadSize: opts.MaxUploadSize,
@@ -65,6 +71,7 @@ const (
 
 func (s *TerraformEnterpriseAPIService) AddHandlers(r *mux.Router) {
 	signed := r.PathPrefix("/signed/{signature.expiry}").Subrouter()
+	signed.Use(internal.VerifySignedURL(s.signer))
 
 	r = r.PathPrefix(APIPrefixV2).Subrouter()
 	r.Use(addTFEApiVersionHeaderHandler)
@@ -74,18 +81,26 @@ func (s *TerraformEnterpriseAPIService) AddHandlers(r *mux.Router) {
 	rsp := s.responder
 
 	// Configuration Versions
-	r.HandleFunc("/configuration-versions/{id}",
-		h(rsp, s.getConfigurationVersion)).Methods("GET")
-	r.HandleFunc("/workspaces/{workspace_id}/configuration-versions",
-		hp(rsp, s.listConfigurationVersions)).Methods("GET")
-	r.HandleFunc("/workspaces/{workspace_id}/configuration-versions",
-		hc(rsp, s.createConfigurationVersion, http.StatusCreated)).Methods("POST")
+	r.HandleFunc("/workspaces/{workspace_id}/configuration-versions", hc(rsp, s.createConfigurationVersion, http.StatusCreated)).Methods("POST")
+	r.HandleFunc("/workspaces/{workspace_id}/configuration-versions", hp(rsp, s.listConfigurationVersions)).Methods("GET")
+	r.HandleFunc("/configuration-versions/{id}", h(rsp, s.getConfigurationVersion)).Methods("GET")
 	r.HandleFunc("/configuration-versions/{id}/download", s.downloadConfigurationVersion).Methods("GET")
 	// Upload is *not* rooted at /api/v2
-	signed.Use(internal.VerifySignedURL(s.signer))
 	signed.HandleFunc("/configuration-versions/{id}/upload", s.UploadConfigurationVersion).Methods("PUT")
 	rsp.Register(tfeapi.IncludeConfig, s.includeByConfigurationVersionIDField)
 	rsp.Register(tfeapi.IncludeIngress, s.includeByConfigurationVersionIngressAttributes)
+
+	// Organizations
+	r.HandleFunc("/organizations", hc(rsp, s.createOrganization, http.StatusCreated)).Methods("POST")
+	r.HandleFunc("/organizations", hp(rsp, s.listOrganizations)).Methods("GET")
+	r.HandleFunc("/organizations/{name}", h(rsp, s.getOrganization)).Methods("GET")
+	r.HandleFunc("/organizations/{name}", h(rsp, s.updateOrganization)).Methods("PATCH")
+	r.HandleFunc("/organizations/{name}", he(rsp, s.deleteOrganization)).Methods("DELETE")
+	r.HandleFunc("/organizations/{name}/entitlement-set", h(rsp, s.getOrganizationEntitlements)).Methods("GET")
+	r.HandleFunc("/organizations/{name}/authentication-token", h(rsp, s.createOrganizationToken)).Methods("POST")
+	r.HandleFunc("/organizations/{name}/authentication-token", h(rsp, s.getOrganizationToken)).Methods("GET")
+	r.HandleFunc("/organizations/{name}/authentication-token", he(rsp, s.deleteOrganizationToken)).Methods("DELETE")
+	rsp.Register(tfeapi.IncludeOrganization, s.includeByOrganizationField)
 }
 
 func addTFEApiVersionHeaderHandler(next http.Handler) http.Handler {
@@ -116,6 +131,16 @@ func hc[T any](rsp *tfeapi.Responder, m func(*http.Request) (*T, error), code in
 			return
 		}
 		rsp.Respond(w, r, res, code)
+	})
+}
+
+func he(rsp *tfeapi.Responder, m func(*http.Request) error) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := m(r); err != nil {
+			tfeapi.Error(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
